@@ -1,0 +1,12 @@
+[Unit]
+Description=MAX7219 cleanup script
+After=systemd-modules-load.service
+Requires=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/matrix-off.py
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

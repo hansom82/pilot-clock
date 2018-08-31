@@ -1,0 +1,13 @@
+[Unit]
+Description=pilotClock daemon
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/PilotClock/main.py -d
+ExecStop=/bin/kill -2 $MAINPID
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
