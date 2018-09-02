@@ -1,4 +1,4 @@
-## pilotClock
+# pilotClock
 pilotClock - a project of digital clock using 16 8x8 LED matrixes, forming a screen with a resolution of 32x32 LEDs
 
 The application code is written in Python. It is possible to run the application on the Windows platform in the emulation mode to easily modify the code for your own needs
@@ -12,10 +12,13 @@ The application code is written in Python. It is possible to run the application
 + Managing time intervals of the allowed sound
 + Alarm clock
 
+Video illustrating how it looks in the real world:
+[vimeo.com/287853670](https://vimeo.com/287853670)
+
 #### Used hardware 
 + Raspberry Pi Model B v.2
 + 4x modules with 4 built-in matrices 8x8 LEDs controlled by MAX7219 drivers 
-+ Real time clock module RTC DS1302
++ Real time clock module RTC DS1307
 + AC/DA-Converter PCF8591 with photoresistor to control the level of illumination and change the display brightness
 + Two DS18B20 temperature sensors for monitoring indoor and outdoor temperatures
 + Standard 5V PC buzzer for alerting of new news and clock alarm signal
