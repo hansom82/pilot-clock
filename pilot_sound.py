@@ -172,7 +172,21 @@ class PilotAlarms(object):
         ps.beep(440, 200)
         reprod.value = False
 
+    def configAccept(self, reprod):
+        ps = PilotSound()
+        reprod.value = True
+        ps.melody("G-2-8 G-2-8 E-2-8")
+        reprod.value = False
+
+    def configFail(self, reprod):
+        ps = PilotSound()
+        reprod.value = True
+        ps.melody("E-1-8 C-1-2 C-1-8")
+        reprod.value = False
+
 
 if __name__ == "__main__":
     pst = PilotSound()
-    pst.melody(MERRY_CHRISTMAS, 1)
+    # pst.melody(MERRY_CHRISTMAS, 1)
+    # pst.melody("G-2-8 G-2-8 E-2-8")
+    pst.melody("E-1-8 C-1-2 C-1-8")

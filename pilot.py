@@ -6,9 +6,10 @@
 
 import os
 import sys
+import json
 from math import floor, ceil
 from time import sleep
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image, ImageDraw
 from luma.led_matrix.device import max7219
 from luma.core.interface.serial import spi, noop
@@ -24,6 +25,7 @@ DATE_OUT_FONT_B = font2bitmapFont(DATE_OUT_FONT, 6)
 RUN_LINE_FONT_B = font2bitmapFont(RUN_LINE_FONT, 9)
 THERM_DIGITS_FONT_B = font2bitmapFont(THERM_DIGITS_FONT, 7)
 SCRIPT_PATH = os.path.abspath(os.path.dirname(sys.argv[0]))
+CONFIG_PATH = 'pilot-clock.conf'
 
 
 def drawBText(draw, xy, txt, fill=None, font=None, align='left'):
@@ -58,24 +60,31 @@ def getBTextSize(txt, font=None):
     """
     font = font or RUN_LINE_FONT_B
     src = [font[ascii_code].width for ascii_code in txt.encode('iso8859-5', errors='replace')]
-    return (sum(src), font[0].height)
+    return sum(src), font[0].height
 
 
 class PilotClock(object):
+    _starting_song = True  # Sets whether to play the initial song when the program starts
+    _news_alarm = True  # Sets whether to play alarms sound on new news in RSS-feed
+    _config_accept_alarm = True  # Sets whether to play alarms when the configuration file is changed
+    _mute = False
+
     _fps = 30
     _draw = None
     _loop = True
-    _starting_song = True
 
     # Alarm time format must be (start time, end time, [days of week])
     # days of week - is optional parameter. If not specified, then all days of week is true
-    _alarm_time = [(datetime.strptime("06:10:00", '%H:%M:%S'), datetime.strptime("07:10:00", '%H:%M:%S'), [0, 1, 2, 3, 4]),
-                   (datetime.strptime("17:30:00", '%H:%M:%S'), datetime.strptime("22:00:00", '%H:%M:%S'), [0, 1, 2, 3, 4]),
-                   (datetime.strptime("11:00:00", '%H:%M:%S'), datetime.strptime("23:00:00", '%H:%M:%S'), [5, 6])]
+    _alarm_time = []
+    # _alarm_time = [(datetime.strptime("06:10:00", '%H:%M:%S'), datetime.strptime("07:10:00", '%H:%M:%S'), [0, 1, 2, 3, 4]),
+    #                (datetime.strptime("17:30:00", '%H:%M:%S'), datetime.strptime("22:00:00", '%H:%M:%S'), [5, 6]),
+    #                (datetime.strptime("11:00:00", '%H:%M:%S'), datetime.strptime("23:00:00", '%H:%M:%S'))]
     # Alarm clock format must be (alarm time, alarm melody number, [days of week])
     # days of week - is optional parameter. If not specified, then all days of week is true
-    _alarm_clock = [(datetime.strptime("06:10", '%H:%M'), 2, [0, 1, 2, 3, 4]),
-                    (datetime.strptime("11:00", '%H:%M'), 1, [5, 6])]
+    _alarm_clock = []
+    # _alarm_clock = [(datetime.strptime("06:10", '%H:%M'), 2, [0, 1, 2, 3, 4]),
+    #                 (datetime.strptime("18:30", '%H:%M'), 2, [5, 6]),
+    #                 (datetime.strptime("11:00", '%H:%M'), 1)]
 
     _scroll_text_show_count = 3  # run line repeat show count
     _scroll_repeat_time = 10     # repeat interval in seconds
@@ -89,6 +98,7 @@ class PilotClock(object):
     _last_scroll_time = datetime.now()
     _scroll_text_img = None
     _scroll_alarm_played = True
+    _config_mtime = None
 
     def __init__(self):
         if os.name == 'nt':
@@ -101,6 +111,60 @@ class PilotClock(object):
         self._logo = Image.open(os.path.join(SCRIPT_PATH, 'pclock.png'))
         self._sensors = Sensors()
 
+    def __del__(self):
+        self.stop()
+
+    def readConfig(self, silent=False):
+        """
+        Method for reading configuration from a file in JSON format
+        :param silent: If set to True, the confirmation signals will not play
+        :return:
+        """
+        silent = silent if self._config_accept_alarm and not self._mute else True
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(CONFIG_PATH))
+            if self._config_mtime != mtime:
+                print('Config changed at {time:%d.%m.%Y %H:%M:%S}'.format(time=mtime))
+                self._config_mtime = mtime
+                with open(CONFIG_PATH, mode='r', encoding='utf-8') as conf:
+                    cfg = json.loads(conf.read(), encoding='utf-8')
+                    self._starting_song = self._starting_song if 'starting_song' not in cfg else cfg['starting_song']
+                    self._news_alarm = self._news_alarm if 'news_alarm' not in cfg else cfg['news_alarm']
+                    self._config_accept_alarm = self._config_accept_alarm if 'config_accept_alarm' not in cfg else cfg['config_accept_alarm']
+                    if 'rss_src' in cfg:
+                        self._sensors.setRSSFeedSource(cfg['rss_src'])
+                    if 'alarm_time' in cfg:
+                        alarm_time = []
+                        for t in cfg['alarm_time']:
+                            if 'start' in t and 'end' in t:
+                                if 'days_of_week' in t and type(t['days_of_week']) == list:
+                                    alarm_time.append((datetime.strptime(t['start'], '%H:%M:%S'),
+                                                       datetime.strptime(t['end'], '%H:%M:%S'), t['days_of_week']))
+                                else:
+                                    alarm_time.append((datetime.strptime(t['start'], '%H:%M:%S'),
+                                                       datetime.strptime(t['end'], '%H:%M:%S')))
+                                self._alarm_time = alarm_time
+                    if 'alarm_clock' in cfg:
+                        alarm_clock = []
+                        for t in cfg['alarm_clock']:
+                            if 'time' in t and 'ringtone' in t:
+                                if 'days_of_week' in t and type(t['days_of_week']) == list:
+                                    alarm_clock.append(
+                                        (datetime.strptime(t['time'], '%H:%M'), int(t['ringtone']), t['days_of_week']))
+                                else:
+                                    alarm_clock.append((datetime.strptime(t['time'], '%H:%M'), int(t['ringtone'])))
+                                self._alarm_clock = alarm_clock
+                    if not silent:
+                        self._sensors.alarm('config_accept')
+        except IOError:
+            print("Error reading configuration file")
+            if not silent:
+                self._sensors.alarm('config_fail')
+        except json.JSONDecodeError:
+            print("Error decoding configuration file")
+            if not silent:
+                self._sensors.alarm('config_fail')
+
     def timeInRange(self, intime=datetime.now(), ranges_list=[]):
         """
         The method checks whether the date is included in the list of specified time ranges
@@ -111,7 +175,7 @@ class PilotClock(object):
         if type(ranges_list) == list and len(ranges_list) > 0:
             for at in ranges_list:
                 atlen = len(at)
-                if type(at) == tuple and 2 <= atlen <=3:
+                if type(at) == tuple and 2 <= atlen <= 3:
                     if atlen == 2 and at[0].time() <= intime.time() <= at[1].time():
                         return True
                     elif atlen == 3 and at[0].time() <= intime.time() <= at[1].time() and intime.weekday() in at[2]:
@@ -131,9 +195,9 @@ class PilotClock(object):
                 ctlen = len(ct)
                 if type(ct) is tuple and 2 <= ctlen <= 3:
                     if ctlen == 2 and ct[0].time() == intime.time():
-                        return (ct[0].time(), ct[1])
+                        return ct[0].time(), ct[1]
                     elif ctlen == 3 and ct[0].time() == intime.time() and intime.weekday() in ct[2]:
-                        return (ct[0].time(), ct[1], intime.weekday())
+                        return ct[0].time(), ct[1], intime.weekday()
         return None
 
     def run(self):
@@ -141,28 +205,35 @@ class PilotClock(object):
         Main program loop
         :return:
         """
-        print('Sound on:', 'ON' if self.timeInRange(datetime.now(), self._alarm_time) else 'OFF')
+        last_conf_read = datetime.now()
+        self.readConfig(silent=True)
+        self._mute = False if self.timeInRange(datetime.now(), self._alarm_time) else True
+        print('Sound:', 'ON' if not self._mute else 'OFF')
+
         show_logo = True
-        logo_time = 10
-        logo_show_time = 0
-        last_clock_alarm = None
+        logo_time = 5
+        logo_show_time = datetime.now()
+        last_alarm_clock = None
         term_pos_y = 2
         if self._starting_song:
-            if self.timeInRange(datetime.now(), self._alarm_time):
+            if not self._mute:
                 self._sensors.alarm('alarm1')
         while self._loop:
-            clock_alarm = self.isAlarmTime(datetime.now(), self._alarm_clock)
-            if clock_alarm is not None and last_clock_alarm != clock_alarm:
-                last_clock_alarm = clock_alarm
-                self._sensors.alarm('alarm'+str(clock_alarm[1]))
+            self._mute = False if self.timeInRange(datetime.now(), self._alarm_time) else True
+            alarm_clock = self.isAlarmTime(datetime.now(), self._alarm_clock)
+            if alarm_clock is not None and last_alarm_clock != alarm_clock:
+                last_alarm_clock = alarm_clock
+                self._sensors.alarm('alarm'+str(alarm_clock[1]))
 
             start_time = datetime.now()
+            if start_time - last_conf_read > timedelta(seconds=60):
+                last_conf_read = datetime.now()
+                self.readConfig()
             self._device.contrast(self._sensors.getLight())
             with canvas(self._device) as self._draw:
                 if show_logo:
                     self.drawLogo(0, 6)
-                    logo_show_time = logo_show_time + 1 if logo_show_time < logo_time else logo_time
-                    if logo_show_time >= logo_time:
+                    if start_time - logo_show_time >= timedelta(seconds=logo_time):
                         show_logo = False
                 else:
                     if not self._do_scroll:
@@ -176,7 +247,7 @@ class PilotClock(object):
                     self.drawDayOfWeek(32, 11)
                     self.drawClock(0, 21)
                     self.drawSecondsLine(1, 18, 30)
-                    self.drawScrollText(0,1, self._sensors.getLastFeed())
+                    self.drawScrollText(0, 1, self._sensors.getLastFeed())
             end_time = (datetime.now() - start_time).total_seconds()
 
             if self._do_scroll or term_pos_y < 2:
@@ -230,6 +301,7 @@ class PilotClock(object):
         Method of rendering the current year and month
         :param x: X display coordinate
         :param y: Y display coordinate
+        :param align: text align
         :return:
         """
         font = DATE_OUT_FONT_B
@@ -243,6 +315,7 @@ class PilotClock(object):
         Method of rendering the current day of week
         :param x: X display coordinate
         :param y: Y display coordinate
+        :param align: text align
         :return:
         """
         font = DATE_OUT_FONT_B
@@ -257,6 +330,7 @@ class PilotClock(object):
         Method of rendering the current time seconds indicator line
         :param x: X display coordinate
         :param y: Y display coordinate
+        :param length: sets length of seconds line
         :return:
         """
         now = datetime.now()
@@ -267,7 +341,7 @@ class PilotClock(object):
         if self._draw is not None and sofs != eofs:
             self._draw.line([(x + sofs, y), (x + eofs - 1, y)], fill="white")
 
-    def drawScrollText(self, x, y, text, offset = 45):
+    def drawScrollText(self, x, y, text, offset=45):
         """
         Method of rendering the scrolling line text
         :param x: X display coordinate
@@ -289,8 +363,8 @@ class PilotClock(object):
             del draw
             self._scroll_text_pos_x = offset
         if self._do_scroll:
-            if not self._scroll_alarm_played:
-                if self.timeInRange(datetime.now(), self._alarm_time) and not self._sensors.alarmInReproduction():
+            if not self._scroll_alarm_played and self._news_alarm:
+                if not self._mute and not self._sensors.alarmInReproduction():
                     self._sensors.alarm('click')
                 self._scroll_alarm_played = True
             if self._scroll_text_img is not None and self._draw is not None:

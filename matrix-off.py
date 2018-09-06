@@ -6,6 +6,7 @@ from luma.core.error import DeviceNotFoundError
 from luma.led_matrix.device import max7219
 from luma.core.interface.serial import spi, noop
 
+
 def matrixOff():
     retry_count = 10
     current_try = 1

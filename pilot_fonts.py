@@ -29,6 +29,7 @@ def font2bitmapFont(font=[], font_height=8):
         del bmp
     return bitmap_font
 
+
 #: Bit patterns for the pilotClock Digits, font height = 10
 DIGITS_FONT = [
     [0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000],  # 0x00

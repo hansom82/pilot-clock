@@ -7,7 +7,6 @@
 
 import os
 import time
-import array
 import feedparser
 from multiprocessing import Process, Value, Array as MpArray
 from ctypes import *
@@ -20,8 +19,6 @@ if os.name is not 'nt':
 class PilotSensors(object):
     # _rss_feed_src = './habrahabr.xml'
     # _rss_refrash_int = 60 # in seconds
-    # _rss_feed_src = 'https://habr.com/rss/feed/posts/all/d4612c3aef7fd96c013d00f3bfc6b66c/'
-    _rss_feed_src = 'https://news.yandex.ru/index.rss'
     _rss_refrash_int = 300  # in seconds
     _alarms = PilotAlarms()
     _alarm_proc = None
@@ -57,9 +54,11 @@ class PilotSensors(object):
 
         # Starting RSS feed reader process
         self._rss_proc_enable = Value(c_bool, True)
+        self._rss_proc_feed_src = MpArray(c_char, bytearray(255))
+        self._rss_proc_feed_src.value = 'https://news.yandex.ru/index.rss'.encode('cp1251')
         self._rss_proc_val = MpArray(c_char, bytearray(255))
         self._rss_proc = Process(target=self.rssProc,
-                                 args=(self._rss_proc_enable, self._rss_proc_val, self._rss_refrash_int))
+                                 args=(self._rss_proc_enable, self._rss_proc_feed_src, self._rss_proc_val, self._rss_refrash_int))
         self._rss_proc.start()
 
         # Starting DS18B20 thermosensors process
@@ -75,7 +74,7 @@ class PilotSensors(object):
         :return:
         """
         print('Stop sensors...')
-        if self._alarm_proc != None and self._alarm_proc.pid is not None and self._alarm_proc.is_alive():
+        if self._alarm_proc is not None and self._alarm_proc.pid is not None and self._alarm_proc.is_alive():
             self._alarm_proc.terminate()
         self._photores_proc_enable.value = False
         self._photores_proc.join()
@@ -94,6 +93,10 @@ class PilotSensors(object):
             self._alarm_proc.terminate()
         if atype == 'click':
             self._alarm_proc = Process(target=self._alarms.click, args=(self._alarm_in_reproduction,))
+        elif atype == 'config_accept':
+            self._alarm_proc = Process(target=self._alarms.configAccept, args=(self._alarm_in_reproduction,))
+        elif atype == 'config_fail':
+            self._alarm_proc = Process(target=self._alarms.configFail, args=(self._alarm_in_reproduction,))
         elif atype == 'alarm1':
             self._alarm_proc = Process(target=self._alarms.clockAlarm, args=(self._alarm_in_reproduction, 1))
         elif atype == 'alarm2':
@@ -136,6 +139,21 @@ class PilotSensors(object):
                 proc_val.value = 255 - int(approx_val)
             time.sleep(0.1)
 
+    def getRSSFeedSource(self):
+        """
+        Method for get current value of RSS feed source variable
+        :return: RSS feed URL
+        """
+        return self._rss_proc_feed_src.value.decode('cp1251')
+
+    def setRSSFeedSource(self, url):
+        """
+        Method to set current value of RSS feed source variable
+        :param url: RSS feed URL
+        :return:
+        """
+        self._rss_proc_feed_src.value = url.encode('cp1251') if type(url) is str else self._rss_proc_feed_src.value
+
     def getLastFeed(self):
         """
         The method of obtaining the last title name of a record from RSS feed
@@ -143,19 +161,21 @@ class PilotSensors(object):
         """
         return self._rss_proc_val.value.decode('iso8859-5')
 
-    def rssProc(self, proc_enable, proc_val, get_inerval=300):
+    def rssProc(self, proc_enable, rss_proc_feed_src, proc_val, get_inerval=300):
         """
         Code of the logic for reading data from RSS feed channel
         :param proc_enable: Continued polling cycle flag
+        :param rss_proc_feed_src: The communication variable with the main process for get/set the value RSS-channel source URL
         :param proc_val: The communication variable with the main process for returning the value read RSS-channel
         :param get_inerval: Sets the polling time interval
         :return:
         """
+        time.sleep(5)  # Starting delay for accepting configuration
         interval = 0
         replace_map = [('«', '"'), ('»', '"'), ('–', '-'), ('—', '-')]
         while proc_enable.value:
             if interval == 0:
-                feed = feedparser.parse(self._rss_feed_src)
+                feed = feedparser.parse(rss_proc_feed_src.value.decode('cp1251'))
                 feed_len = len(feed['entries'])
                 if feed_len > 0:
                     last_rec_title = str(feed['entries'][0]['title']).replace('«', '"')
@@ -184,7 +204,7 @@ class PilotSensors(object):
         :return:
         """
         interval = 0
-        s_paths = [self._therm_sensors_base_dir + '/28-' + id + '/w1_slave' for id in self._therm_sensor_ids]
+        s_paths = [self._therm_sensors_base_dir + '/28-' + sid + '/w1_slave' for sid in self._therm_sensor_ids]
         while proc_enable.value:
             if interval == 0:
                 for i, sensor in enumerate(s_paths):

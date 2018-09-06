@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# pilitClick project
+# pilotClick project
 #
 # It is led matrix clock based on Raspberry Pi Model B rev.2
 # with the following functionality:
@@ -12,6 +12,7 @@
 #
 # (c) Hansom 2018
 
+__version__ = '0.0.1b'
 import sys
 from multiprocessing import freeze_support
 from pilot import PilotClock as Clock
